@@ -7,9 +7,11 @@ from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 import io
 import requests
+from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
 # Load DELF model
 delf = hub.load('https://tfhub.dev/google/delf/1').signatures['default']
@@ -23,13 +25,17 @@ def preprocess_image(image, size=(256, 256)):
 def extract_features(image):
     """Extract features from an image using DELF model."""
     np_image = np.array(image)
+    print(f"Image shape: {np_image.shape}")
     float_image = tf.image.convert_image_dtype(np_image, tf.float32)
     result = delf(
         image=float_image,
         score_threshold=tf.constant(100.0),
         image_scales=tf.constant([0.25, 0.3536, 0.5, 0.7071, 1.0, 1.4142, 2.0]),
         max_feature_num=tf.constant(1000))
-    return result['descriptors'].numpy()
+    descriptors = result['descriptors'].numpy()
+    print(f"Extracted descriptors shape: {descriptors.shape}")
+    return descriptors
+
 
 def fetch_image_from_url(image_url):
     """Fetch an image from a URL."""
@@ -40,18 +46,28 @@ def fetch_image_from_url(image_url):
 def match_uploaded_image(uploaded_image, base_url, image_names):
     """Match the uploaded image with remote images from the base URL and return the matched image and similarity score."""
     uploaded_image = preprocess_image(uploaded_image)
-    uploaded_features = extract_features(uploaded_image).mean(axis=0)  # Mean of features
+    uploaded_features = extract_features(uploaded_image)
+    
+    if uploaded_features.size == 0:
+        return None, 0
+
+    uploaded_features = uploaded_features.mean(axis=0)  # Mean of features
 
     sample_images = []
     sample_features = []
 
     # Process all sample images
     for image_name in image_names:
-        image_url = f'{base_url}/{image_name}'
+        image_url = f'{image_name}'
         try:
             image = fetch_image_from_url(image_url)
             image = preprocess_image(image)
-            features = extract_features(image).mean(axis=0)  # Mean of features
+            features = extract_features(image)
+            
+            if features.size == 0:
+                continue
+            
+            features = features.mean(axis=0)  # Mean of features
             sample_images.append(image_url)
             sample_features.append(features)
         except Exception as e:
@@ -72,6 +88,7 @@ def match_uploaded_image(uploaded_image, base_url, image_names):
     best_match_similarity = similarities[best_match_index]
 
     return best_match_image, best_match_similarity
+
 
 @app.route('/match', methods=['POST'])
 def match_image():
@@ -95,20 +112,22 @@ def match_image():
 
     # Get image names from the form data
     image_names = [value for key, value in request.form.items() if key.startswith('image_names[')]
+    # return jsonify(image_names), 200
     if not image_names:
         return jsonify({'error': 'No image names provided'}), 400
 
-    base_url = f'https://buybestthemes.com/mobile_app_api/user-{user_id}'
+    base_url = f'https://buybestthemes.com/mobile_app_api/tuned_ink/storage/app/public/tattoos/user_{user_id}'
     matched_image_path, similarity_score = match_uploaded_image(uploaded_image, base_url, image_names)
 
     # Return the result with similarity percentage
-    if similarity_score < 0.60:
-        return jsonify({'matched_image_path': 'No matched image found', 'similarity_score': similarity_score * 100})
+    if similarity_score < 0.70:
+        return jsonify({'matched_image_path': 'No matched image found', 'similarity_score': similarity_score * 100}), 500
 
     return jsonify({
         'matched_image_path': matched_image_path,
         'similarity_score': similarity_score * 100  # Convert to percentage
     })
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(port=8000, debug=True)
+
