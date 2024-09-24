@@ -1,0 +1,7 @@
+*.md
+*.log
+__pycache__/
+*.png
+*.jpg
+tests/
+docs/
